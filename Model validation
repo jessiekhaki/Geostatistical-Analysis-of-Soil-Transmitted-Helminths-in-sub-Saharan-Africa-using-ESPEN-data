@@ -1,0 +1,254 @@
+#This is a sample code for the nrPIT model validation
+
+load("rwa.data.mod.RData")
+load("rwa.grid.pred.RData")
+load("rwa.pred.vars.RData")
+load("rwa.fit.MCML.HK.RData")
+
+library(PrevMap)
+library(splines)
+
+#load("pred.HK")
+data.valid <- data.mod 
+
+pr <- 0.3
+set.seed(111)
+
+ind <- 1:nrow(data.valid)
+n <- length(ind)
+n.train <- round(pr*n)
+n.test <- n-n.train
+ind.train <- ind[sample(1:n,n.test)]
+
+n.train <- length(ind.train)
+n.test <- n-n.train
+test.set <- data.valid[-ind.train,]
+
+#changes : set fit.full to the fit.MCML and then subset with ind.train
+fit.full <- fit.MCML.HK
+fit.MCML <- fit.MCML.HK
+fit.full$y <- fit.MCML$y[ ind.train] #changed to minus to remain with
+fit.full$units.m <- fit.MCML$units.m[ind.train] #the test set only
+fit.full$D <- as.matrix(fit.MCML$D[ind.train,])
+
+fit.full$coords <- unique(data.valid[ind.train,c("utm_x","utm_y")])
+#fit.full$samples <- fit.MCML$samples[,ind.train]
+
+fit.full$ID.coords <- create.ID.coords(data.frame(utm_x=data.valid$utm_x[ind.train],
+                                                  utm_y=data.valid$utm_y[ind.train]),  ~utm_x+utm_y)
+
+#fit.full$ID.coords <- create.ID.coords(data.frame(utm_x=fit.full$coords[1],
+#                                                 utm_y=fit.full$coords[2] ),  ~utm_x+utm_y)
+
+# Control parameters of the Monte Carlo algorithm
+control.mcmc <- control.mcmc.MCML(n.sim=110000,burnin=10000,thin=10)
+
+grid.pred <- test.set[,c("utm_x","utm_y")]
+
+grid.pred[,1] <- grid.pred[,1]+runif(nrow(grid.pred),-0.001,0.001)
+grid.pred[,2] <- grid.pred[,2]+runif(nrow(grid.pred),-0.001,0.001)
+
+pred.full <- spatial.pred.binomial.MCML(fit.full, grid.pred=grid.pred,
+                                        predictors = test.set,
+                                        type="joint",
+                                        control.mcmc = control.mcmc,
+                                        scale.predictions = "prevalence")
+
+prev.samples <- 1/(1+exp(-pred.full$samples+
+                           sqrt(coef(fit.full)["tau^2"])*
+                           rnorm(length(pred.full$samples))))
+n.sim <- dim(prev.samples)[2]
+
+y.sim <-sapply(1:n.sim, function(i) rbinom(n.test,test.set$HK_examined,prev.samples[,i]))
+
+
+compute.PIT <- function(new.y) {
+  P.x <- rep(NA,n.test)
+  P.x_1 <- rep(NA,n.test)
+  
+  for(i in 1:n.test) {
+    P.x[i] <- mean(sapply(1:n.sim,
+                          function(j) pbinom(new.y[i],
+                                             test.set$HK_examined[i],
+                                             prev.samples[i,j])))
+    P.x_1[i] <- mean(sapply(1:n.sim,
+                            function(j) pbinom(new.y[i]-1,
+                                               test.set$HK_examined[i],
+                                               prev.samples[i,j])))
+  }
+  
+  
+  nr.PIT <- function(u) {
+    F.i <- rep(NA,n.test)
+    for(i in 1:n.test) {
+      if(u < P.x_1[i]) {
+        F.i[i] <- 0
+      } else if (u < P.x[i] & u > P.x_1[i]) {
+        F.i[i] <- (u-P.x_1[i])/(P.x[i]-P.x_1[i])
+      } else  {
+        F.i[i] <- 1
+      }
+    }
+    out <- mean(F.i)
+    return(out)
+  }
+  l <- 10
+  up <- 0.99
+  lo <- 0.01
+  u <- seq(0.01,0.99,length=l)
+  v <- sapply(u,nr.PIT)
+  out <- list(u=u,v=v)
+  return(out)
+}
+obs.v <- compute.PIT(test.set$HK_positive)
+
+result <- list()
+result$obs <- obs.v$v
+result$u <- obs.v$u
+
+n.bin <- length(obs.v$u)
+result$sim <- matrix(NA,ncol=n.sim,nrow = n.bin)
+for(i in 1:n.sim) {
+  result$sim[,i] <- compute.PIT(y.sim[,i])$v
+  cat("iter:",i,"\r")
+}
+
+LU <- t(apply(result$sim,1,function(x) quantile(x,c(0.025,0.975))))
+
+write.csv(LU, "rwa.LU.HK.30.csv")
+write.csv(result, "rwa.results.HK.30.csv")
+
+save(LU, file="rwa.LU.HK.30.RData")
+save(result, file="rwa.result.HK.30.RData")
+
+#====== HK 40%
+pr <- 0.4
+set.seed(111)
+
+ind <- 1:nrow(data.valid)
+n <- length(ind)
+n.train <- round(pr*n)
+n.test <- n-n.train
+ind.train <- ind[sample(1:n,n.test)]
+n.train <- length(ind.train)
+n.test <- n-n.train
+test.set <- data.valid[-ind.train,]
+
+#changes : set fit.full to the fit.MCML and then subset with ind.train
+fit.full <- fit.MCML.HK
+fit.MCML <- fit.MCML.HK
+fit.full$y <- fit.MCML$y[ind.train] #changed to minus to remain with
+fit.full$units.m <- fit.MCML$units.m[ind.train] #the test set only
+fit.full$D <- as.matrix(fit.MCML$D[ind.train,])#good for null models
+fit.full$coords <- unique(data.valid[ind.train,c("utm_x","utm_y")])
+#fit.full$samples <- fit.MCML$samples[,ind.train]
+
+fit.full$ID.coords <- create.ID.coords(data.frame(utm_x=data.valid$utm_x[ind.train],
+                                                  utm_y=data.valid$utm_y[ind.train]),  ~utm_x+utm_y)
+
+grid.pred <- test.set[,c("utm_x","utm_y")]
+grid.pred[,1] <- grid.pred[,1]+runif(nrow(grid.pred),-0.001,0.001)
+grid.pred[,2] <- grid.pred[,2]+runif(nrow(grid.pred),-0.001,0.001)
+
+pred.full <- spatial.pred.binomial.MCML(fit.full, grid.pred=grid.pred,
+                                        predictors = test.set,
+                                        type="joint",
+                                        control.mcmc = control.mcmc,
+                                        scale.predictions = "prevalence")
+
+prev.samples <- 1/(1+exp(-pred.full$samples+
+                           sqrt(coef(fit.full)["tau^2"])*
+                           rnorm(length(pred.full$samples))))
+n.sim <- dim(prev.samples)[2]
+
+y.sim <-sapply(1:n.sim, function(i) rbinom(n.test,test.set$HK_examined,prev.samples[,i]))
+
+obs.v <- compute.PIT(test.set$HK_positive)
+
+result <- list()
+result$obs <- obs.v$v
+result$u <- obs.v$u
+
+n.bin <- length(obs.v$u)
+result$sim <- matrix(NA,ncol=n.sim,nrow = n.bin)
+for(i in 1:n.sim) {
+  result$sim[,i] <- compute.PIT(y.sim[,i])$v
+  cat("iter:",i,"\r")
+}
+
+LU <- t(apply(result$sim,1,function(x) quantile(x,c(0.025,0.975))))
+
+write.csv(LU, "rwa.LU.HK.40.csv")
+write.csv(result, "rwa.results.HK.40.csv")
+
+save(LU, file="rwa.LU.HK.40.RData")
+save(result, file="rwa.result.HK.40.RData")
+
+#====== HK 50%
+#====== HK 50%
+pr <- 0.5
+set.seed(111)
+
+ind <- 1:nrow(data.valid)
+n <- length(ind)
+n.train <- round(pr*n)
+n.test <- n-n.train
+ind.train <- ind[sample(1:n,n.test)]
+n.train <- length(ind.train)
+n.test <- n-n.train
+test.set <- data.valid[-ind.train,]
+
+#changes : set fit.full to the fit.MCML and then subset with ind.train
+fit.full <- fit.MCML.HK
+fit.MCML <- fit.MCML.HK
+fit.full$y <- fit.MCML$y[ind.train] #changed to minus to remain with
+fit.full$units.m <- fit.MCML$units.m[ind.train] #the test set only
+fit.full$D <- as.matrix(fit.MCML$D[ind.train,])
+fit.full$coords <- unique(data.valid[ind.train,c("utm_x","utm_y")])
+#fit.full$samples <- fit.MCML$samples[,ind.train]
+
+fit.full$ID.coords <- create.ID.coords(data.frame(utm_x=data.valid$utm_x[ind.train],
+                                                  utm_y=data.valid$utm_y[ind.train] ),  ~utm_x+utm_y)
+
+grid.pred <- test.set[,c("utm_x","utm_y")]
+grid.pred[,1] <- grid.pred[,1]+runif(nrow(grid.pred),-0.001,0.001)
+grid.pred[,2] <- grid.pred[,2]+runif(nrow(grid.pred),-0.001,0.001)
+
+pred.full <- spatial.pred.binomial.MCML(fit.full, grid.pred=grid.pred,
+                                        predictors = test.set,
+                                        type="joint",
+                                        control.mcmc = control.mcmc,
+                                        scale.predictions = "prevalence")
+
+prev.samples <- 1/(1+exp(-pred.full$samples+
+                           sqrt(coef(fit.full)["tau^2"])*
+                           rnorm(length(pred.full$samples))))
+n.sim <- dim(prev.samples)[2]
+
+y.sim <-sapply(1:n.sim, function(i) rbinom(n.test,test.set$HK_examined,prev.samples[,i]))
+
+obs.v <- compute.PIT(test.set$HK_positive)
+
+result <- list()
+result$obs <- obs.v$v
+result$u <- obs.v$u
+
+n.bin <- length(obs.v$u)
+result$sim <- matrix(NA,ncol=n.sim,nrow = n.bin)
+for(i in 1:n.sim) {
+  result$sim[,i] <- compute.PIT(y.sim[,i])$v
+  cat("iter:",i,"\r")
+}
+
+LU <- t(apply(result$sim,1,function(x) quantile(x,c(0.025,0.975))))
+
+write.csv(LU, "rwa.LU.HK.50.csv")
+write.csv(result, "rwa.results.HK.50.csv")
+
+save(LU, file="rwa.LU.HK.50.RData")
+save(result, file="rwa.result.HK.50.RData")
+
+par(mfrow=c(1,3))
+
+#===================================================================================
+#The code given above can be replicated for ASC and TT
