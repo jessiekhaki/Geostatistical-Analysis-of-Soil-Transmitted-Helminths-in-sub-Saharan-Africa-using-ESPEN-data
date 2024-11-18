@@ -1,1 +1,100 @@
+#load the data
+load("data.mod.RData")
+load("rwa.grid.pred.RData") #this is the prediction grid
+load("pred.vars.RData") #this is the dataset that contains the prediction grid and spatial covariates
 
+#==============================================================
+#- Fit the models for Malawi
+library(PrevMap)
+ID.coords <- create.ID.coords(data = data.mod,~I(utm_x/1000)+I(utm_y/1000))
+
+fit.LA.HK <- glgm.LA(HK_positive ~ tmax+elev+nightlight , 
+                     units.m= ~HK_examined,
+                     coords      = ~I(utm_x/1000)+I(utm_y/1000), kappa=0.5,
+                     start.cov.pars = 70,fixed.rel.nugget = 0,
+                     data = data.mod,   ID.coords = ID.coords,
+                     family = "Binomial")
+
+par0.HK <- coef(fit.LA.HK)
+summary(fit.LA.HK)
+
+# Monte Calo maximum likelihood estimation
+
+# Control parameters of the Monte Carlo algorithm
+control.mcmc <- control.mcmc.MCML(n.sim=110000,burnin=10000, thin=10)
+
+fit.MCML.HK <- binomial.logistic.MCML(HK_positive ~ 
+                                        tmax+elev+nightlight,
+                units.m=~HK_examined, coords=~I(utm_x/1000)+I(utm_y/1000),
+                ID.coords = ID.coords,
+                kappa=0.5,  #start.cov.pars-not 70!!!
+                start.cov.pars = 70,fixed.rel.nugget = 0,
+                control.mcmc = control.mcmc,par0 = par0.HK,
+                data= data.mod, method="nlminb")
+summary(fit.MCML.HK) #ppt & elev sig tmax not
+
+rwa.grid.pred <- as.matrix(rwa.grid.pred)
+class(rwa.grid.pred)
+pred.HK <- spatial.pred.binomial.MCML(fit.MCML.HK,
+                  grid.pred = as.matrix(rwa.grid.pred)/1000,
+                predictors = pred.vars, control.mcmc = control.mcmc,
+                  scale.predictions = "prevalence")
+par()
+par(mar=c( rep(2.5, 4) ))
+plot(pred.HK,"prevalence","predictions",main="Predictions") #24% 
+range(pred.HK[[1]][1]) #56%
+
+#-----------------------------------------------------------------------
+#- ASC
+fit.LA.ASC <- glgm.LA(Asc_positive ~ tmax+ppt+water_way+
+                        offset(pd), 
+                      units.m = ~Asc_examined,
+                      coords      = ~I(utm_x/1000)+I(utm_y/1000), kappa=0.5,
+                      start.cov.pars = 70,
+                      fixed.rel.nugget = 0,
+                      data  = data.mod, ID.coords = ID.coords,
+                                            family = "Binomial")
+summary(fit.LA.ASC)
+par0.ASC <- coef(fit.LA.ASC)
+
+fit.MCML.ASC <- binomial.logistic.MCML(Asc_positive ~
+                                   tmax+ppt+water_way+ offset(pd),
+                    units.m=~Asc_examined, coords=~I(utm_x/1000)+I(utm_y/1000),
+                    ID.coords = ID.coords,
+                     kappa=0.5,  
+                    start.cov.pars = 70,fixed.rel.nugget = 0,
+                    control.mcmc = control.mcmc,par0 = par0.ASC,
+                                      data= data.mod, method="nlminb")
+summary(fit.MCML.ASC)
+
+
+sort(data.mod$Asc_positive/data.mod$Asc_examined)# 1
+# Spatial prediction
+pred.ASC <- spatial.pred.binomial.MCML(fit.MCML.ASC,
+                      grid.pred = as.matrix(rwa.grid.pred)/1000,
+                      predictors = pred.vars, control.mcmc = control.mcmc,
+                      scale.predictions = "prevalence")
+plot(pred.ASC,"prevalence","predictions",main="Predictions") #50%
+range(pred.ASC[[1]][1])#3 - 99.7
+contour(pred.ASC,"prevalence",add=TRUE,levels=0.02)
+
+#===========================================================================
+#- TT
+
+fit.LA.TT <- glgm.LA(TT_positive ~tmax + ppt+nightlight, 
+                     units.m= ~ TT_examined ,
+                     coords      = ~I(utm_x/1000)+I(utm_y/1000), kappa=0.5,
+                     start.cov.pars = c(70,2),fixed.rel.nugget = NULL,
+                     data = data.mod,   ID.coords = ID.coords,
+                     family = "Binomial")
+par0.TT <- coef(fit.LA.TT)
+summary(fit.LA.TT)
+
+fit.MCML.TT <- binomial.logistic.MCML(TT_positive ~ 
+               tmax+ ppt + nightlight ,
+               units.m=~TT_examined, coords=~I(utm_x/1000)+I(utm_y/1000),
+               ID.coords = ID.coords, kappa=0.5,  
+               start.cov.pars = c(70,2),fixed.rel.nugget = NULL,
+               control.mcmc = control.mcmc,par0 = par0.TT,
+               data= data.mod, method="nlminb")
+summary(fit.MCML.TT)
