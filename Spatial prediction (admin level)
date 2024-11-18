@@ -1,1 +1,207 @@
+#set the working directory
+
+library(sf)
+library(sfheaders)
+
+#---------------------------------------------------------------------
+#Extract the covariates per district
+adm_name <- unique(pred.vars$adm2_name)
+
+# Spatial prediction
+pred.vars_adm <- list()
+for(i in 1:length(adm_name)){
+  pred.vars_adm[[i]] <- rwa.grid.pred_adm[[i]]
+}
+
+#extract the covariates for each admin area
+pre.vars_adm <- list()
+rwa.grid.pred_adm <- list()
+pred.vars_adm <- list()
+
+#remove na border values
+for(i in 1:length(adm_name)){
+pred.vars_adm[[i]] <- subset(pred.vars, adm2_name == adm_name[i]) #27,081/27154
+rwa.grid.pred_adm[[i]] <- pred.vars_adm[[i]][,c("utm_x", "utm_y", "adm2_name")]
+pred.vars_adm[[i]] <- as.data.frame(pred.vars_adm[[i]]) #previous class is  tbl_df, tbl & df
+}
+
+pred.vars_adm2 <- list()
+rwa.grid.pred_adm2 <- list()
+
+#save them
+save(rwa.grid.pred_adm, file="rwa.grid.pred_adm.RData")
+save(pred.vars_adm, file="pred.vars_adm.RData")
+
+#now carry out the predictions at district level
+#I think we will need a specific function for this, but at least we are making progress! :)
+
+# Control parameters of the Monte Carlo algorithm
+control.mcmc <- control.mcmc.MCML(n.sim=110000,burnin=10000, thin=10)
+
+pred.HK_adm <- list()
+for(i in 1:length(adm_name)){
+  pred.HK_adm[[i]] <- spatial.pred.binomial.MCML(fit.MCML.HK, type = "joint",
+                            grid.pred = as.matrix(rwa.grid.pred_adm[[i]][,c("utm_x", "utm_y")])/1000,
+                               predictors = pred.vars_adm[[i]], control.mcmc = control.mcmc,
+                               scale.predictions = "prevalence",
+                      thresholds = c(0.02, 0.1, 0.2, 0.5),  scale.thresholds = "prevalence" )
+}
+save(pred.HK_adm, file="rwa.pred.HK_adm.RData")
+
+#----------------------------------------------------
+pred.ASC_adm <- list()
+for(i in 1:length(adm_name)){
+  pred.ASC_adm[[i]] <- spatial.pred.binomial.MCML(fit.MCML.ASC, type = "joint",
+                                  grid.pred = as.matrix(rwa.grid.pred_adm[[i]][,c("utm_x", "utm_y")])/1000,
+                                   predictors = pred.vars_adm[[i]], control.mcmc = control.mcmc,
+                                     scale.predictions = "prevalence",
+                              thresholds = c(0.02, 0.1, 0.2, 0.5),  scale.thresholds = "prevalence" )
+}
+save(pred.ASC_adm, file="rwa.pred.ASC_adm.RData")
+
+#----------------------------------------------
+pred.TT_adm <- list()
+for(i in 1:length(adm_name)){
+  pred.TT_adm[[i]] <- spatial.pred.binomial.MCML(fit.MCML.TT, type = "joint",
+                            grid.pred = as.matrix(rwa.grid.pred_adm[[i]][,c("utm_x", "utm_y")])/1000,
+                            predictors = pred.vars_adm[[i]], control.mcmc = control.mcmc,
+                                scale.predictions = "prevalence",
+                          thresholds = c(0.02, 0.1, 0.2, 0.5),  scale.thresholds = "prevalence" )
+}
+
+save(pred.TT_adm, file="rwa.pred.TT_adm.RData")
+
+#=========================================================================================================================
+#Define a function for extracting the predicted probabilities and exceedance probabilities for HK, ASC, 
+#TT, and Overall STH at admin (regional) level
+
+#- Combined probability map
+#predicted probabilities
+prob.function.adm <- function(pred.HK.admin, pred.ASC.admin, pred.TT.admin, country.name, iso2.name, admin.name,
+                              species=species){
+  library(PrevMap) #2545 - prevmap
+  
+  prob.HK.samples <- 1/(1+exp(-pred.HK.admin$samples)) #calculating the prev from odds
+  prob.TT.samples <- 1/(1+exp(-pred.TT.admin$samples))
+  prob.ASC.samples <- 1/(1+exp(-pred.ASC.admin$samples))
+  prob.atlone.samples <- 1-(1-prob.HK.samples) * (1-prob.TT.samples) * (1-prob.ASC.samples) 
+  
+  #=========================================================
+  #function for predicted probabilities
+  pred.fun <- function(prob.samples, species=species){
+    pred.object <- data.frame( mean(prob.samples) )
+    names(pred.object) <- "prev"
+    pred.object$species <- species
+    pred.object$quantile2.5 <-  quantile(prob.samples, probs = 0.025, na.rm = FALSE)
+    pred.object$quantile97.5 <- quantile(prob.samples, probs = 0.975, na.rm = FALSE)
+    return(pred.object)
+  }
+  
+  pred2.HK <- pred.fun(prob.HK.samples, species = "HK")
+  pred2.ASC <- pred.fun(prob.ASC.samples, species = "ASC")
+  pred2.TT <- pred.fun(prob.TT.samples, species = "TT")
+  pred2.STH <- pred.fun(prob.atlone.samples, species = "STH")
+  
+  #===========================================================================
+  #function for exceedance probabilities
+  exceed.fun <- function(prob.samples){
+    pred.exceed <- data.frame( mean(prob.samples > 0.02, na.rm=TRUE) )
+    names(pred.exceed) <- "pred.bet2"
+    pred.exceed$pred.bet10 <- mean(prob.samples > 0.1, na.rm=TRUE)  
+    pred.exceed$pred.bet20 <- mean(prob.samples > 0.2, na.rm=TRUE) 
+    pred.exceed$pred.above50 <- mean(prob.samples > 0.5, na.rm=TRUE) 
+    
+    #get the exceedance probabilities
+    pred.exceed$exceed_2 <- 1-pred.exceed$pred.bet2
+    pred.exceed$exceed2_10 <- (1-pred.exceed$pred.bet10) - (1-pred.exceed$pred.bet2)
+    pred.exceed$exceed10_20 <- (1-pred.exceed$pred.bet20) - (1-pred.exceed$pred.bet10)
+    pred.exceed$exceed20_50 <- (1-pred.exceed$pred.above50) - (1-pred.exceed$pred.bet20)
+    pred.exceed$exceed_50 <- pred.exceed$pred.above50
+    
+    #quality check
+    pred.exceed$exceed.total <- pred.exceed$exceed_2 + pred.exceed$exceed2_10+
+      pred.exceed$exceed10_20 + pred.exceed$exceed20_50 + pred.exceed$exceed_50
+    
+    return(pred.exceed)
+  }
+  
+  pred.exceed.HK <- exceed.fun(prob.HK.samples)
+  pred.exceed.ASC <- exceed.fun(prob.ASC.samples)
+  pred.exceed.TT <- exceed.fun(prob.TT.samples)
+  pred.exceed.STH <- exceed.fun(prob.atlone.samples)
+  
+  #========================================================================
+  ##combine the files into one
+  #create a function for extracting predicted probabilities
+ # utmToLonlat.fun <- function(prediction.object){#object from PrevMap
+  #  xy.utm <- prediction.object$grid*1000 #because the models divide by 1000
+   # library(sp)
+    #xy.utm <- SpatialPoints(xy.utm) #convert to a spatial points object
+    #proj4string(xy.utm) <- CRS("+init=epsg:3857") #re-project the points
+    #get longlat coordinates
+    #xy.lonlat <- spTransform(xy.utm, CRS("+proj=longlat"))
+    #xy.lonlat <- data.frame(xy.lonlat) #convert back to a dataframe
+    #names(xy.lonlat) <- c("Longitude", "Latitude")
+    #return(xy.lonlat)
+  #}
+  
+  final.output <- function(pred2, pred.HK.admin, pred.exceed, country.name, iso2.name, admin.name ){
+    output <- cbind(pred2, pred.exceed )
+    
+    #add the country and ISOs
+    output$Country <- country.name
+    output$ISO2 <- iso2.name
+    output$admin.name <- admin.name
+    output$species <- pred2$species
+    #include the coordinates in the predictions
+  #  output$Longitude <- utmToLonlat.fun( prediction.object = pred.HK.admin )[,1]
+   # output$Latitude <- utmToLonlat.fun( prediction.object = pred.HK.admin )[,2]
+    
+    #calculate the WHO thresholds using probability rules
+    #get the max probability
+    output[,"category"] <-  colnames(output[,c("exceed_2", "exceed2_10"
+                                               ,"exceed10_20", "exceed20_50", "exceed_50")])[max.col(output[, 
+                                     c("exceed_2", "exceed2_10","exceed10_20","exceed20_50","exceed_50")])]
+    
+    output$category <- factor(output$category,
+                              levels=c("exceed_2", "exceed2_10", "exceed10_20","exceed20_50", "exceed_50"),
+                              labels=c("0%-2%", "2%-10%", "10%-20%", "20%-50%", "50% and above" ))
+    
+    return(output)
+  }
+  
+  output.HK <- final.output(pred2.HK, pred.HK.admin, pred.exceed.HK, country.name, iso2.name, admin.name)
+  output.ASC <- final.output(pred2.ASC, pred.HK.admin,  pred.exceed.ASC, country.name, iso2.name, admin.name)
+  output.TT <- final.output(pred2.TT, pred.HK.admin, pred.exceed.TT, country.name, iso2.name, admin.name)
+  output.STH <- final.output(pred2.STH, pred.HK.admin,pred.exceed.STH, country.name, iso2.name, admin.name)
+  
+  #====================================================================
+  #give output names
+  #save the outputs
+  write.csv(output.HK, file=paste0(admin.name, ".admin.prob.HK", ".csv"))
+  write.csv(output.ASC, file=paste0(admin.name, ".admin.prob.ASC", ".csv"))
+  write.csv(output.TT, file=paste0(admin.name, ".admin.prob.TT", ".csv"))
+  write.csv(output.STH, file=paste0(admin.name, ".admin.prob.STH", ".csv"))
+  #=================================================================
+  
+}
+
+#=============================================================================================================
+
+Use the function defined above to merge the predictions
+
+##merge the predictions
+for(i in 1:length(adm_name)){
+ # admin.name <- adm_name[i]
+  pred.HK.admin <- pred.HK_adm[[i]]
+  pred.ASC.admin <- pred.ASC_adm[[i]]
+  pred.TT.admin <- pred.TT_adm[[i]]
+  
+  #run the function
+  prob.function.adm(pred.HK.admin, pred.ASC.admin, pred.TT.admin,
+                    "Rwanda", "rwa", admin.name=adm_name[i])
+}
+
+#==================================================================================================================
+
 
