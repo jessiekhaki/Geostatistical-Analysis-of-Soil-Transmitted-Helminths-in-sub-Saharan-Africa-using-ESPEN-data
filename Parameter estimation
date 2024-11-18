@@ -8,7 +8,7 @@ load("pred.vars.RData") #this is the dataset that contains the prediction grid a
 library(PrevMap)
 ID.coords <- create.ID.coords(data = data.mod,~I(utm_x/1000)+I(utm_y/1000))
 
-fit.LA.HK <- glgm.LA(HK_positive ~ tmax+elev+nightlight , 
+fit.LA.HK <- glgm.LA(HK_positive ~ soil , 
                      units.m= ~HK_examined,
                      coords      = ~I(utm_x/1000)+I(utm_y/1000), kappa=0.5,
                      start.cov.pars = 70,fixed.rel.nugget = 0,
@@ -24,7 +24,7 @@ summary(fit.LA.HK)
 control.mcmc <- control.mcmc.MCML(n.sim=110000,burnin=10000, thin=10)
 
 fit.MCML.HK <- binomial.logistic.MCML(HK_positive ~ 
-                                        tmax+elev+nightlight,
+                                      soil,
                 units.m=~HK_examined, coords=~I(utm_x/1000)+I(utm_y/1000),
                 ID.coords = ID.coords,
                 kappa=0.5,  #start.cov.pars-not 70!!!
@@ -46,8 +46,7 @@ range(pred.HK[[1]][1]) #56%
 
 #-----------------------------------------------------------------------
 #- ASC
-fit.LA.ASC <- glgm.LA(Asc_positive ~ tmax+ppt+water_way+
-                        offset(pd), 
+fit.LA.ASC <- glgm.LA(Asc_positive ~ nightlight + precipitation + soil, 
                       units.m = ~Asc_examined,
                       coords      = ~I(utm_x/1000)+I(utm_y/1000), kappa=0.5,
                       start.cov.pars = 70,
@@ -58,7 +57,7 @@ summary(fit.LA.ASC)
 par0.ASC <- coef(fit.LA.ASC)
 
 fit.MCML.ASC <- binomial.logistic.MCML(Asc_positive ~
-                                   tmax+ppt+water_way+ offset(pd),
+                                   nightlight + precipitation + soil,
                     units.m=~Asc_examined, coords=~I(utm_x/1000)+I(utm_y/1000),
                     ID.coords = ID.coords,
                      kappa=0.5,  
